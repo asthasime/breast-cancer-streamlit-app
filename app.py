@@ -2,136 +2,133 @@ import streamlit as st
 import pickle
 import pandas as pd
 
-# -------------------- LOAD MODEL --------------------
+# ---------------- LOAD MODEL ----------------
 with open('model.pkl', 'rb') as f:
     data = pickle.load(f)
 
 model = data['model']
 columns = data['columns']
+scaler = data.get('scaler', None)  # Load scaler if exists
 
-# -------------------- PAGE CONFIG --------------------
 st.set_page_config(page_title="Breast Cancer Prediction", layout="wide")
 
 st.title("🧬 Breast Cancer Prediction App")
-st.write("Enter the values below to predict whether the tumor is **Benign or Malignant**.")
+st.write("Predict whether a tumor is **Benign or Malignant**")
 
-# -------------------- SIDEBAR --------------------
-st.sidebar.header("⚙️ Controls")
-st.sidebar.info("Adjust values and click Predict")
+# ---------------- MODE SELECTION ----------------
+mode = st.sidebar.radio("Select Mode", ["Upload CSV", "Manual Input"])
 
-# -------------------- FEATURE GROUPING --------------------
-mean_cols = [col for col in columns if "_mean" in col]
-se_cols = [col for col in columns if "_se" in col]
-worst_cols = [col for col in columns if "_worst" in col]
+# =========================================================
+# 🔵 MODE 1: CSV UPLOAD (BATCH PREDICTION)
+# =========================================================
+if mode == "Upload CSV":
 
-input_data = {}
+    st.header("📁 Upload CSV for Batch Prediction")
 
-# -------------------- TABS --------------------
-tab1, tab2, tab3 = st.tabs(["Mean Features", "SE Features", "Worst Features"])
+    file = st.file_uploader("Upload CSV file", type=["csv"])
 
-with tab1:
-    st.header("Mean Features")
-    for col in mean_cols:
-        input_data[col] = st.slider(col, 0.0, 100.0, 10.0)
+    if file:
+        df = pd.read_csv(file)
 
-with tab2:
-    st.header("Standard Error Features")
-    for col in se_cols:
-        input_data[col] = st.slider(col, 0.0, 50.0, 5.0)
-
-with tab3:
-    st.header("Worst Features")
-    for col in worst_cols:
-        input_data[col] = st.slider(col, 0.0, 150.0, 20.0)
-
-# -------------------- DATAFRAME --------------------
-input_df = pd.DataFrame([input_data])
-input_df = input_df.reindex(columns=columns, fill_value=0)
-
-# -------------------- SHOW INPUT --------------------
-st.subheader("📋 Input Summary")
-st.dataframe(input_df)
-
-# -------------------- PREDICTION --------------------
-if st.button("🔍 Predict"):
-
-    with st.spinner("Analyzing..."):
-        prediction = model.predict(input_df)[0]
-        prob = model.predict_proba(input_df)[0][1]
-
-    st.subheader("🧾 Result")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric("Prediction", "Malignant" if prediction == 1 else "Benign")
-
-    with col2:
-        st.metric("Confidence", f"{prob*100:.2f}%")
-
-    # -------------------- RESULT MESSAGE --------------------
-    if prediction == 1:
-        st.error("⚠️ Malignant (Cancer Detected)")
-    else:
-        st.success("✅ Benign (No Cancer)")
-
-    # -------------------- PROBABILITY CHART --------------------
-    prob_df = pd.DataFrame({
-        "Class": ["Benign", "Malignant"],
-        "Probability": [1 - prob, prob]
-    })
-
-    st.subheader("📊 Prediction Confidence")
-    st.bar_chart(prob_df.set_index("Class"))
-
-    # -------------------- RISK BAR --------------------
-    st.subheader("🔬 Risk Level")
-    st.progress(int(prob * 100))
-    st.write(f"Risk Score: {prob*100:.1f}%")
-
-    # -------------------- INTERPRETATION --------------------
-    st.subheader("🧠 Interpretation")
-
-    if prediction == 1:
-        st.write("The model predicts a high likelihood of malignant tumor. Medical consultation is recommended.")
-    else:
-        st.write("The model predicts a benign tumor. Risk appears low.")
-
-# -------------------- FILE UPLOAD --------------------
-st.subheader("📁 Bulk Prediction")
-
-uploaded_file = st.file_uploader("Upload CSV or Excel file")
-
-if uploaded_file:
-    try:
-        # Detect file type
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding='utf-8')
-        else:
-            df = pd.read_excel(uploaded_file)
-
-        st.write("📋 Uploaded Data")
+        st.subheader("📊 Uploaded Data")
         st.dataframe(df)
 
-        # Align columns
+        # Ensure correct columns
         df = df.reindex(columns=columns, fill_value=0)
 
-        # Prediction
-        preds = model.predict(df)
-        probs = model.predict_proba(df)[:, 1]
+        # Apply scaling if available
+        if scaler:
+            df_scaled = scaler.transform(df)
+        else:
+            df_scaled = df
 
-        # Create result dataframe
-        result_df = df.copy()
-        result_df["Prediction"] = preds
-        result_df["Prediction Label"] = result_df["Prediction"].map({
-            0: "Benign",
-            1: "Malignant"
+        # Predictions
+        preds = model.predict(df_scaled)
+        probs = model.predict_proba(df_scaled)[:, 1]
+
+        # Add results
+        df['Prediction'] = ["Malignant" if p == 1 else "Benign" for p in preds]
+        df['Probability'] = probs
+
+        st.subheader("✅ Prediction Results")
+        st.dataframe(df)
+
+        # Download button
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download Results", csv, "predictions.csv", "text/csv")
+
+        # Visualization
+        st.subheader("📊 Prediction Distribution")
+        st.bar_chart(df['Prediction'].value_counts())
+
+# =========================================================
+# 🟢 MODE 2: MANUAL INPUT
+# =========================================================
+else:
+
+    st.header("✍️ Manual Input")
+
+    mean_cols = [col for col in columns if "_mean" in col]
+    se_cols = [col for col in columns if "_se" in col]
+    worst_cols = [col for col in columns if "_worst" in col]
+
+    input_data = {}
+
+    tab1, tab2, tab3 = st.tabs(["Mean Features", "SE Features", "Worst Features"])
+
+    with tab1:
+        st.subheader("Mean Features")
+        for col in mean_cols:
+            input_data[col] = st.number_input(col, value=10.0)
+
+    with tab2:
+        st.subheader("Standard Error Features")
+        for col in se_cols:
+            input_data[col] = st.number_input(col, value=1.0)
+
+    with tab3:
+        st.subheader("Worst Features")
+        for col in worst_cols:
+            input_data[col] = st.number_input(col, value=20.0)
+
+    # Convert to DataFrame
+    input_df = pd.DataFrame([input_data])
+    input_df = input_df.reindex(columns=columns, fill_value=0)
+
+    st.subheader("📋 Input Data")
+    st.dataframe(input_df)
+
+    if st.button("🔍 Predict"):
+
+        # Apply scaling
+        if scaler:
+            input_scaled = scaler.transform(input_df)
+        else:
+            input_scaled = input_df
+
+        prediction = model.predict(input_scaled)[0]
+        prob = model.predict_proba(input_scaled)[0][1]
+
+        st.subheader("🧾 Result")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric("Prediction", "Malignant" if prediction == 1 else "Benign")
+
+        with col2:
+            st.metric("Confidence", f"{prob*100:.2f}%")
+
+        if prediction == 1:
+            st.error("⚠️ Malignant (Cancer Detected)")
+        else:
+            st.success("✅ Benign (No Cancer)")
+
+        # Probability visualization
+        prob_df = pd.DataFrame({
+            "Class": ["Benign", "Malignant"],
+            "Probability": [1 - prob, prob]
         })
-        result_df["Probability"] = probs
 
-        st.success("✅ Prediction completed")
-        st.write("📊 Results")
-        st.dataframe(result_df)
-
-    except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.subheader("📊 Prediction Probability")
+        st.bar_chart(prob_df.set_index("Class"))
