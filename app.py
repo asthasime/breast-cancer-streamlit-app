@@ -1,6 +1,8 @@
 import streamlit as st
 import pickle
 import pandas as pd
+import shap
+import matplotlib.pyplot as plt
 
 # ---------------- LOAD MODEL ----------------
 with open('model.pkl', 'rb') as f:
@@ -8,18 +10,21 @@ with open('model.pkl', 'rb') as f:
 
 model = data['model']
 columns = data['columns']
-scaler = data.get('scaler', None)  # Load scaler if exists
+scaler = data.get('scaler', None)
+
+# SHAP Explainer
+explainer = shap.Explainer(model, feature_names=columns)
 
 st.set_page_config(page_title="Breast Cancer Prediction", layout="wide")
 
 st.title("🧬 Breast Cancer Prediction App")
 st.write("Predict whether a tumor is **Benign or Malignant**")
 
-# ---------------- MODE SELECTION ----------------
+# ---------------- MODE ----------------
 mode = st.sidebar.radio("Select Mode", ["Upload CSV", "Manual Input"])
 
 # =========================================================
-# 🔵 MODE 1: CSV UPLOAD (BATCH PREDICTION)
+# 🔵 MODE 1: CSV UPLOAD
 # =========================================================
 if mode == "Upload CSV":
 
@@ -33,33 +38,35 @@ if mode == "Upload CSV":
         st.subheader("📊 Uploaded Data")
         st.dataframe(df)
 
-        # Ensure correct columns
         df = df.reindex(columns=columns, fill_value=0)
 
-        # Apply scaling if available
         if scaler:
             df_scaled = scaler.transform(df)
         else:
             df_scaled = df
 
-        # Predictions
         preds = model.predict(df_scaled)
         probs = model.predict_proba(df_scaled)[:, 1]
 
-        # Add results
         df['Prediction'] = ["Malignant" if p == 1 else "Benign" for p in preds]
         df['Probability'] = probs
 
         st.subheader("✅ Prediction Results")
         st.dataframe(df)
 
-        # Download button
+        # Download
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ Download Results", csv, "predictions.csv", "text/csv")
 
         # Visualization
         st.subheader("📊 Prediction Distribution")
         st.bar_chart(df['Prediction'].value_counts())
+
+        st.subheader("📊 Probability Distribution")
+        st.bar_chart(df['Probability'])
+
+        st.subheader("📈 Feature Summary")
+        st.write(df.describe())
 
 # =========================================================
 # 🟢 MODE 2: MANUAL INPUT
@@ -91,7 +98,6 @@ else:
         for col in worst_cols:
             input_data[col] = st.number_input(col, value=20.0)
 
-    # Convert to DataFrame
     input_df = pd.DataFrame([input_data])
     input_df = input_df.reindex(columns=columns, fill_value=0)
 
@@ -100,7 +106,6 @@ else:
 
     if st.button("🔍 Predict"):
 
-        # Apply scaling
         if scaler:
             input_scaled = scaler.transform(input_df)
         else:
@@ -132,3 +137,33 @@ else:
 
         st.subheader("📊 Prediction Probability")
         st.bar_chart(prob_df.set_index("Class"))
+
+        # ================= SHAP =================
+        st.subheader("🔍 Model Explainability (SHAP)")
+
+        try:
+            shap_values = explainer(input_scaled)
+
+            fig, ax = plt.subplots()
+            shap.plots.bar(shap_values[0], show=False)
+            st.pyplot(fig)
+
+            # ================= INTERPRETATION =================
+            st.subheader("🧠 Interpretation")
+
+            shap_vals = shap_values.values[0]
+
+            feature_importance = sorted(
+                zip(columns, shap_vals),
+                key=lambda x: abs(x[1]),
+                reverse=True
+            )[:3]
+
+            for feature, value in feature_importance:
+                if value > 0:
+                    st.write(f"🔺 {feature} increases risk")
+                else:
+                    st.write(f"🔻 {feature} decreases risk")
+
+        except Exception as e:
+            st.warning("SHAP explanation not available for this model.")
